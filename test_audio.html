@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Traffic + Emergency Demo (Image + Audio)</title>
+  <style>
+    body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; max-width:900px; margin:24px auto; color:#111; }
+    h1 { margin:0 0 8px; }
+    .card { border:1px solid #e6e6e6; padding:16px; border-radius:10px; box-shadow: 0 6px 18px rgba(20,20,20,0.03); }
+    .row { display:flex; gap:16px; align-items:center; }
+    label { display:block; margin-bottom:8px; font-weight:600; }
+    input[type="file"] { display:block; }
+    button { padding:10px 14px; border-radius:8px; border:none; background:#0b76ff; color:white; font-weight:600; cursor:pointer; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    img.preview { max-width:300px; max-height:300px; object-fit:contain; border-radius:8px; border:1px solid #ddd; }
+    .output { margin-top:14px; white-space:pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace; background:#fbfbff; padding:12px; border-radius:8px; border:1px dashed #eee; }
+    .small { font-size:13px; color:#666; }
+    .flex { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:12px; }
+    .stat { background:#fff; border-radius:8px; padding:8px 12px; border:1px solid #efefef; min-width:160px; }
+    .mode-btn { padding:8px 10px; border-radius:8px; border:1px solid #eee; cursor:pointer; background:#f7f9ff; }
+    .mode-btn.active { background:#0b76ff; color:#fff; border-color:#0b76ff; }
+    audio.player { max-width:300px; display:block; margin-top:8px; }
+    .controls { margin-top:12px; }
+  </style>
+</head>
+<body>
+  <h1>Traffic & Emergency Classifier</h1>
+  <p class="small">Choose Image or Audio mode. Image → runs emergency & traffic models. Audio → runs the siren/vehicle audio classifier.</p>
+
+  <div class="card">
+    <div style="display:flex; gap:8px; align-items:center;">
+      <button id="imgMode" class="mode-btn active">Image</button>
+      <button id="audMode" class="mode-btn">Audio</button>
+      <div style="flex:1"></div>
+      <div class="small">Backend endpoints: <code>/infer</code> (image) &nbsp; <code>/infer-audio</code> (audio)</div>
+    </div>
+
+    <!-- IMAGE SECTION -->
+    <div id="imageSection" style="margin-top:12px;">
+      <label for="fileImage">Choose image</label>
+      <input id="fileImage" type="file" accept="image/*" />
+      <div class="flex" style="margin-top:12px;">
+        <div>
+          <img id="previewImage" class="preview" src="" alt="preview" style="display:none" />
+        </div>
+        <div style="flex:1;">
+          <div style="margin-bottom:8px;">
+            <button id="submitImageBtn" disabled>Upload & Analyze (Image)</button>
+            <button id="clearImageBtn" style="margin-left:8px" disabled>Clear</button>
+          </div>
+
+          <div id="statusImage" class="small">No image selected.</div>
+
+          <div id="resultsImage" style="display:none; margin-top:12px;">
+            <div class="stat" id="vehicleStat"></div>
+            <div class="stat" id="trafficStat"></div>
+            <div class="stat" id="greenStat"></div>
+          </div>
+        </div>
+      </div>
+      <div id="rawImage" class="output" style="display:none; margin-top:12px;"></div>
+    </div>
+
+    <!-- AUDIO SECTION -->
+    <div id="audioSection" style="margin-top:12px; display:none;">
+      <label for="fileAudio">Choose audio (.wav recommended)</label>
+      <input id="fileAudio" type="file" accept="audio/*" />
+      <div class="flex" style="margin-top:12px;">
+        <div style="min-width:300px;">
+          <audio id="previewAudio" class="player" controls style="display:none"></audio>
+        </div>
+        <div style="flex:1;">
+          <div style="margin-bottom:8px;">
+            <button id="submitAudioBtn" disabled>Upload & Analyze (Audio)</button>
+            <button id="clearAudioBtn" style="margin-left:8px" disabled>Clear</button>
+          </div>
+          <div id="statusAudio" class="small">No audio selected.</div>
+
+          <div id="resultsAudio" style="display:none; margin-top:12px;">
+            <div class="stat" id="audioTop"></div>
+            <div class="stat" id="audioProbs"></div>
+            <!-- NEW: dedicated green time stat for audio -->
+            <div class="stat" id="audioGreen"></div>
+          </div>
+        </div>
+      </div>
+      <div id="rawAudio" class="output" style="display:none; margin-top:12px;"></div>
+    </div>
+
+    <div class="controls" style="margin-top:14px;">
+      <small class="small">Make sure your backend is running at <code>http://localhost:8000</code>. CORS is required on the server for this page to work.</small>
+    </div>
+  </div>
+
+  <script>
+    // Mode buttons
+    const imgModeBtn = document.getElementById('imgMode');
+    const audModeBtn = document.getElementById('audMode');
+    const imageSection = document.getElementById('imageSection');
+    const audioSection = document.getElementById('audioSection');
+
+    function setMode(mode) {
+      if (mode === 'image') {
+        imgModeBtn.classList.add('active'); audModeBtn.classList.remove('active');
+        imageSection.style.display = ''; audioSection.style.display = 'none';
+      } else {
+        audModeBtn.classList.add('active'); imgModeBtn.classList.remove('active');
+        imageSection.style.display = 'none'; audioSection.style.display = '';
+      }
+    }
+    imgModeBtn.addEventListener('click', () => setMode('image'));
+    audModeBtn.addEventListener('click', () => setMode('audio'));
+
+    // Image elements
+    const fileInput = document.getElementById('fileImage');
+    const preview = document.getElementById('previewImage');
+    const submitBtn = document.getElementById('submitImageBtn');
+    const clearBtn = document.getElementById('clearImageBtn');
+    const status = document.getElementById('statusImage');
+    const raw = document.getElementById('rawImage');
+    const vehicleStat = document.getElementById('vehicleStat');
+    const trafficStat = document.getElementById('trafficStat');
+    const greenStat = document.getElementById('greenStat');
+    const resultsDiv = document.getElementById('resultsImage');
+
+    let selectedImage = null;
+
+    fileInput.addEventListener('change', (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) {
+        selectedImage = null;
+        preview.style.display = 'none';
+        submitBtn.disabled = true;
+        clearBtn.disabled = true;
+        status.textContent = 'No image selected.';
+        return;
+      }
+      selectedImage = f;
+      preview.src = URL.createObjectURL(f);
+      preview.style.display = 'block';
+      submitBtn.disabled = false;
+      clearBtn.disabled = false;
+      status.textContent = `Selected: ${f.name} (${Math.round(f.size/1024)} KB)`;
+      raw.style.display = 'none';
+      resultsDiv.style.display = 'none';
+    });
+
+    clearBtn.addEventListener('click', () => {
+      fileInput.value = '';
+      selectedImage = null;
+      preview.src = '';
+      preview.style.display = 'none';
+      submitBtn.disabled = true;
+      clearBtn.disabled = true;
+      status.textContent = 'No image selected.';
+      raw.style.display = 'none';
+      resultsDiv.style.display = 'none';
+    });
+
+    submitBtn.addEventListener('click', async () => {
+      if (!selectedImage) return;
+      submitBtn.disabled = true;
+      status.textContent = 'Uploading and analyzing...';
+      raw.style.display = 'none';
+      resultsDiv.style.display = 'none';
+
+      try {
+        const form = new FormData();
+        form.append('file', selectedImage);
+
+        const res = await fetch('http://localhost:8000/infer', {
+          method: 'POST',
+          body: form
+        });
+
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`Server error: ${res.status} ${text}`);
+        }
+
+        const json = await res.json();
+
+        vehicleStat.textContent = `Vehicle: ${json.vehicle_label ?? 'unknown'} (prob=${(json.vehicle_prob ?? 0).toFixed(4)})`;
+
+        if (json.vehicle_label === 'emergency') {
+          trafficStat.textContent = 'Traffic: (skipped — emergency detected)';
+          greenStat.textContent = `Green time: ${json.green_time} seconds (EMERGENCY)`;
+        } else {
+          const trafficLabel = json.traffic_label ?? 'unknown';
+          let trafficProbs = '';
+          if (json.traffic_probabilities) {
+            trafficProbs = Object.entries(json.traffic_probabilities)
+              .map(([k,v]) => `${k}: ${Number(v).toFixed(4)}`)
+              .join(', ');
+          }
+          trafficStat.textContent = `Traffic: ${trafficLabel} ${trafficProbs ? ' — ' + trafficProbs : ''}`;
+          greenStat.textContent = `Green time: ${json.green_time} seconds`;
+        }
+
+        raw.style.display = 'block';
+        raw.textContent = JSON.stringify(json, null, 2);
+        resultsDiv.style.display = 'flex';
+        status.textContent = 'Done';
+      } catch (err) {
+        status.textContent = 'Error: ' + err.message;
+        raw.style.display = 'block';
+        raw.textContent = err.stack || err.message;
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+
+
+    // Audio elements
+    const fileAudio = document.getElementById('fileAudio');
+    const previewAudio = document.getElementById('previewAudio');
+    const submitAudioBtn = document.getElementById('submitAudioBtn');
+    const clearAudioBtn = document.getElementById('clearAudioBtn');
+    const statusAudio = document.getElementById('statusAudio');
+    const rawAudio = document.getElementById('rawAudio');
+    const audioTop = document.getElementById('audioTop');
+    const audioProbs = document.getElementById('audioProbs');
+    const audioGreen = document.getElementById('audioGreen');
+    const resultsAudioDiv = document.getElementById('resultsAudio');
+
+    let selectedAudio = null;
+
+    fileAudio.addEventListener('change', (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) {
+        selectedAudio = null;
+        previewAudio.style.display = 'none';
+        submitAudioBtn.disabled = true;
+        clearAudioBtn.disabled = true;
+        statusAudio.textContent = 'No audio selected.';
+        return;
+      }
+      selectedAudio = f;
+      previewAudio.src = URL.createObjectURL(f);
+      previewAudio.style.display = 'block';
+      submitAudioBtn.disabled = false;
+      clearAudioBtn.disabled = false;
+      statusAudio.textContent = `Selected: ${f.name} (${Math.round(f.size/1024)} KB)`;
+      rawAudio.style.display = 'none';
+      resultsAudioDiv.style.display = 'none';
+    });
+
+    clearAudioBtn.addEventListener('click', () => {
+      fileAudio.value = '';
+      selectedAudio = null;
+      previewAudio.src = '';
+      previewAudio.style.display = 'none';
+      submitAudioBtn.disabled = true;
+      clearAudioBtn.disabled = true;
+      statusAudio.textContent = 'No audio selected.';
+      rawAudio.style.display = 'none';
+      resultsAudioDiv.style.display = 'none';
+    });
+
+    submitAudioBtn.addEventListener('click', async () => {
+      if (!selectedAudio) return;
+      submitAudioBtn.disabled = true;
+      statusAudio.textContent = 'Uploading and analyzing...';
+      rawAudio.style.display = 'none';
+      resultsAudioDiv.style.display = 'none';
+
+      try {
+        const form = new FormData();
+        form.append('file', selectedAudio);
+
+        const res = await fetch('http://localhost:8000/infer-audio', {
+          method: 'POST',
+          body: form
+        });
+
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`Server error: ${res.status} ${text}`);
+        }
+
+        const json = await res.json();
+
+        audioTop.textContent = `Top: ${json.top_label ?? 'unknown'} (prob=${(json.top_prob ?? 0).toFixed(4)})`;
+        let probsText = '';
+        if (json.predictions) {
+          probsText = Object.entries(json.predictions)
+            .map(([k,v]) => `${k}: ${Number(v).toFixed(4)}`)
+            .join(', ');
+        }
+        audioProbs.textContent = `Probs: ${probsText}`;
+
+        // display green_time + reason if provided
+        const gt = json.green_time;
+        const reason = json.decision_reason ?? json.reason ?? '';
+        if (typeof gt !== 'undefined' && gt !== null) {
+          audioGreen.textContent = `Green time: ${gt} seconds${reason ? ' (' + reason + ')' : ''}`;
+        } else {
+          audioGreen.textContent = `Green time: N/A`;
+        }
+
+        rawAudio.style.display = 'block';
+        rawAudio.textContent = JSON.stringify(json, null, 2);
+        resultsAudioDiv.style.display = 'flex';
+        statusAudio.textContent = 'Done';
+      } catch (err) {
+        statusAudio.textContent = 'Error: ' + err.message;
+        rawAudio.style.display = 'block';
+        rawAudio.textContent = err.stack || err.message;
+      } finally {
+        submitAudioBtn.disabled = false;
+      }
+    });
+
+    // start in image mode
+    setMode('image');
+  </script>
+</body>
+</html>
