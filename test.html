@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Traffic + Emergency Demo</title>
+  <style>
+    body { font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; max-width:900px; margin:24px auto; color:#111; }
+    h1 { margin:0 0 8px; }
+    .card { border:1px solid #e6e6e6; padding:16px; border-radius:10px; box-shadow: 0 6px 18px rgba(20,20,20,0.03); }
+    .row { display:flex; gap:16px; align-items:center; }
+    label { display:block; margin-bottom:8px; font-weight:600; }
+    input[type="file"] { display:block; }
+    button { padding:10px 14px; border-radius:8px; border:none; background:#0b76ff; color:white; font-weight:600; cursor:pointer; }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    img.preview { max-width:300px; max-height:300px; object-fit:contain; border-radius:8px; border:1px solid #ddd; }
+    .output { margin-top:14px; white-space:pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace; background:#fbfbff; padding:12px; border-radius:8px; border:1px dashed #eee; }
+    .small { font-size:13px; color:#666; }
+    .flex { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-top:12px; }
+    .stat { background:#fff; border-radius:8px; padding:8px 12px; border:1px solid #efefef; min-width:160px; }
+  </style>
+</head>
+<body>
+  <h1>Traffic & Emergency Classifier</h1>
+  <p class="small">Upload an image and the backend will run the emergency classifier first; if not emergency, it will run traffic-density and return a green time decision.</p>
+
+  <div class="card">
+    <label for="file">Choose image</label>
+    <input id="file" type="file" accept="image/*" />
+    <div class="flex" style="margin-top:12px;">
+      <div>
+        <img id="preview" class="preview" src="" alt="preview" style="display:none" />
+      </div>
+      <div style="flex:1;">
+        <div style="margin-bottom:8px;">
+          <button id="submitBtn" disabled>Upload & Analyze</button>
+          <button id="clearBtn" style="margin-left:8px" disabled>Clear</button>
+        </div>
+
+        <div id="status" class="small">No image selected.</div>
+
+        <div id="results" style="display:none; margin-top:12px;">
+          <div class="stat" id="vehicleStat"></div>
+          <div class="stat" id="trafficStat"></div>
+          <div class="stat" id="greenStat"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="raw" class="output" style="display:none; margin-top:12px;"></div>
+  </div>
+
+  <script>
+    const fileInput = document.getElementById('file');
+    const preview = document.getElementById('preview');
+    const submitBtn = document.getElementById('submitBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const status = document.getElementById('status');
+    const raw = document.getElementById('raw');
+    const vehicleStat = document.getElementById('vehicleStat');
+    const trafficStat = document.getElementById('trafficStat');
+    const greenStat = document.getElementById('greenStat');
+    const resultsDiv = document.getElementById('results');
+
+    let selectedFile = null;
+
+    fileInput.addEventListener('change', (e) => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) {
+        selectedFile = null;
+        preview.style.display = 'none';
+        submitBtn.disabled = true;
+        clearBtn.disabled = true;
+        status.textContent = 'No image selected.';
+        return;
+      }
+      selectedFile = f;
+      const url = URL.createObjectURL(f);
+      preview.src = url;
+      preview.style.display = 'block';
+      submitBtn.disabled = false;
+      clearBtn.disabled = false;
+      status.textContent = `Selected: ${f.name} (${Math.round(f.size/1024)} KB)`;
+      raw.style.display = 'none';
+      resultsDiv.style.display = 'none';
+    });
+
+    clearBtn.addEventListener('click', () => {
+      fileInput.value = '';
+      selectedFile = null;
+      preview.src = '';
+      preview.style.display = 'none';
+      submitBtn.disabled = true;
+      clearBtn.disabled = true;
+      status.textContent = 'No image selected.';
+      raw.style.display = 'none';
+      resultsDiv.style.display = 'none';
+    });
+
+    submitBtn.addEventListener('click', async () => {
+      if (!selectedFile) return;
+      submitBtn.disabled = true;
+      status.textContent = 'Uploading and analyzing...';
+      raw.style.display = 'none';
+      resultsDiv.style.display = 'none';
+
+      try {
+        const form = new FormData();
+        form.append('file', selectedFile);
+
+        // Change URL to point to your backend. Uses localhost:8000 by default.
+        const res = await fetch('http://localhost:8000/infer', {
+          method: 'POST',
+          body: form
+        });
+
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`Server error: ${res.status} ${text}`);
+        }
+
+        const json = await res.json();
+
+        // show high-level stats
+        vehicleStat.textContent = `Vehicle: ${json.vehicle_label ?? 'unknown'} (prob=${(json.vehicle_prob ?? 0).toFixed(4)})`;
+
+        if (json.vehicle_label === 'emergency') {
+          trafficStat.textContent = 'Traffic: (skipped — emergency detected)';
+          greenStat.textContent = `Green time: ${json.green_time} seconds (EMERGENCY)`;
+        } else {
+          const trafficLabel = json.traffic_label ?? 'unknown';
+          let trafficProbs = '';
+          if (json.traffic_probabilities) {
+            trafficProbs = Object.entries(json.traffic_probabilities)
+              .map(([k,v]) => `${k}: ${Number(v).toFixed(4)}`)
+              .join(', ');
+          }
+          trafficStat.textContent = `Traffic: ${trafficLabel} ${trafficProbs ? ' — ' + trafficProbs : ''}`;
+          greenStat.textContent = `Green time: ${json.green_time} seconds`;
+        }
+
+        raw.style.display = 'block';
+        raw.textContent = JSON.stringify(json, null, 2);
+        resultsDiv.style.display = 'flex';
+        status.textContent = 'Done';
+      } catch (err) {
+        status.textContent = 'Error: ' + err.message;
+        raw.style.display = 'block';
+        raw.textContent = err.stack || err.message;
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
