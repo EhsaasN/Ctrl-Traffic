@@ -12,6 +12,12 @@ import { LogOut, Activity } from 'lucide-react';
 import type { User } from '@/types/auth';
 import { generateAISuggestions } from '@/utils/ai-mock';
 
+interface MediaSet {
+  image?: string;
+  audio?: string;
+  video?: string;
+}
+
 interface DashboardProps {
   user: User;
   onLogout: () => void;
@@ -19,7 +25,6 @@ interface DashboardProps {
 
 type QueueItem = { signal_num: number; green_time: number; score?: number; label?: string };
 
-// mapping signal numbers (UI) back to directions
 const NUM_TO_DIR: Record<number, Direction> = {
   1: 'north',
   2: 'east',
@@ -32,7 +37,9 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
   const [selectedJunctions, setSelectedJunctions] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<'monitoring' | 'ai' | 'manual'>('monitoring');
   const [selectedJunctionId, setSelectedJunctionId] = useState<string | null>(null);
-  const [uploadedImages, setUploadedImages] = useState<Record<string, Record<Direction, string>>>({});
+
+  // uploadedMedia: junctionId -> direction -> { image?, audio?, video? (data URLs) }
+  const [uploadedMedia, setUploadedMedia] = useState<Record<string, Record<Direction, MediaSet>>>({});
 
   const [aiQueues, setAiQueues] = useState<Record<string, { ordered: QueueItem[]; idx: number }>>({});
 
@@ -167,7 +174,6 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
 
         Object.keys(newSignals).forEach((dirKey) => {
           const dir = dirKey as Direction;
-          // **map numbers to directions using UI mapping**
           const sigNum = (dir === 'north') ? 1 : (dir === 'east') ? 2 : (dir === 'west') ? 3 : 4;
           if (first && sigNum === first.signal_num) {
             newSignals[dir] = { color: 'green', timer: first.green_time };
@@ -190,16 +196,37 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
   const selectedJunction = junctions.find((j) => j.id === selectedJunctionId) || monitoredJunctions[0] || null;
   const aiState = selectedJunction ? generateAISuggestions(selectedJunction.id) : null;
 
+  // Handles any media upload (image/audio/video) and stores as Data URL
+  const handleMediaUpload = (direction: Direction, file: File, mediaType: 'image' | 'audio' | 'video') => {
+    if (!selectedJunction) return;
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setUploadedMedia((prev) => ({
+        ...prev,
+        [selectedJunction.id]: {
+          ...(prev[selectedJunction.id] || { north: {}, east: {}, south: {}, west: {} }),
+          [direction]: {
+            ...(prev[selectedJunction.id]?.[direction] || {}),
+            [mediaType]: reader.result as string
+          }
+        }
+      }));
+    };
+
+    // Use readAsDataURL for all types so we can send as blob later
+    reader.readAsDataURL(file);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 flex flex-col">
       <header className="bg-white dark:bg-slate-950 border-b shadow-sm sticky top-0 z-10">
         <div className="px-4 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <Activity className="h-8 w-8 text-blue-600" />
+              <span className="text-2xl font-bold text-blue-600">🚦</span>
               <div>
-                <h1 className="text-2xl font-bold">Junction Control Dashboard</h1>
-                <p className="text-sm text-muted-foreground">Traffix Traffic Management System</p>
+                <h1 className="text-2xl font-bold">TRAFFIX</h1>
+                <p className="text-sm text-muted-foreground">Traffic Management System</p>
               </div>
             </div>
             <div className="flex items-center gap-4">
@@ -243,22 +270,8 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
             <TabsContent value="ai">
               <AIControlTab 
                 junction={selectedJunction}
-                uploadedImages={selectedJunction ? uploadedImages[selectedJunction.id] || {} : {}}
-                onImageUpload={(direction, file) => {
-                  if (selectedJunction) {
-                    const reader = new FileReader();
-                    reader.onloadend = () => {
-                      setUploadedImages((prev) => ({
-                        ...prev,
-                        [selectedJunction.id]: {
-                          ...(prev[selectedJunction.id] || {}),
-                          [direction]: reader.result as string
-                        }
-                      }));
-                    };
-                    reader.readAsDataURL(file);
-                  }
-                }}
+                uploadedMedia={selectedJunction ? uploadedMedia[selectedJunction.id] || { north: {}, east: {}, south: {}, west: {} } : { north: {}, east: {}, south: {}, west: {} }}
+                onMediaUpload={(direction, file, mediaType) => handleMediaUpload(direction, file, mediaType)}
                 onApplyAISuggestions={handleApplyAISuggestionsFromUI}
               />
             </TabsContent>
@@ -268,7 +281,7 @@ export function Dashboard({ user, onLogout }: DashboardProps) {
                 junction={selectedJunction}
                 aiSuggestedTimer={aiState?.currentSuggestedTimer || 45}
                 onApplyChanges={handleApplyManualChanges}
-                uploadedImages={selectedJunction ? uploadedImages[selectedJunction.id] || {} : {}}
+                uploadedImages={selectedJunction ? (uploadedMedia[selectedJunction.id] || {}) : {}}
               />
             </TabsContent>
           </Tabs>

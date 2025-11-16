@@ -7,10 +7,16 @@ import type { Junction, Direction, AIControlState } from '@/types/junction';
 import { generateAISuggestions } from '@/utils/ai-mock';
 import { IntersectionVisualization } from './intersection-visualization';
 
+interface MediaSet {
+  image?: string;
+  audio?: string;
+  video?: string;
+}
+
 interface AIControlTabProps {
   junction: Junction | null;
-  uploadedImages: Record<Direction, string>;
-  onImageUpload: (direction: Direction, file: File) => void;
+  uploadedMedia: Record<Direction, MediaSet>;
+  onMediaUpload: (direction: Direction, file: File, mediaType: 'image' | 'audio' | 'video') => void;
   onApplyAISuggestions?: (junctionId: string, ordered: Array<{ signal_num: number; green_time: number; score?: number; label?: string }>) => void;
 }
 
@@ -30,15 +36,14 @@ const CLASS_PRIORITY: Record<string, number> = {
   'no-traffic': 1
 };
 
-// **CORRECTED MAPPING TO MATCH UI BUTTON LABELS**
 const DIR_TO_NUM: Record<Direction, number> = {
-  north: 1, // #1 in your UI
-  east: 2,  // #2 in your UI
-  west: 3,  // #3 in your UI (note: west was #3 in the visualization)
-  south: 4  // #4 in your UI
+  north: 1,
+  east: 2,
+  west: 3,
+  south: 4
 };
 
-export function AIControlTab({ junction, uploadedImages, onImageUpload, onApplyAISuggestions }: AIControlTabProps) {
+export function AIControlTab({ junction, uploadedMedia, onMediaUpload, onApplyAISuggestions }: AIControlTabProps) {
   const [aiState, setAiState] = useState<AIControlState | null>(null);
   const [busy, setBusy] = useState(false);
   const [lastResult, setLastResult] = useState<any>(null);
@@ -54,7 +59,7 @@ export function AIControlTab({ junction, uploadedImages, onImageUpload, onApplyA
   async function dataUrlToFile(dataUrl: string, filename: string) {
     const res = await fetch(dataUrl);
     const blob = await res.blob();
-    return new File([blob], filename, { type: blob.type || 'image/jpeg' });
+    return new File([blob], filename, { type: blob.type || 'application/octet-stream' });
   }
 
   function extractScoreFromPayload(payload: any): number {
@@ -93,46 +98,66 @@ export function AIControlTab({ junction, uploadedImages, onImageUpload, onApplyA
 
     const directions: Direction[] = ['north', 'east', 'south', 'west'];
 
-    const toSubmit = directions.map((d) => ({ dir: d, dataUrl: uploadedImages?.[d] })).filter((x) => !!x.dataUrl);
+    // collect available media per direction
+    const toSubmit: Array<{ direction: Direction; mediaType: 'image' | 'audio' | 'video'; dataUrl: string }> = [];
+    for (const d of directions) {
+      const media = uploadedMedia?.[d] || {};
+      if (media.image) toSubmit.push({ direction: d, mediaType: 'image', dataUrl: media.image });
+      if (media.audio) toSubmit.push({ direction: d, mediaType: 'audio', dataUrl: media.audio });
+      if (media.video) toSubmit.push({ direction: d, mediaType: 'video', dataUrl: media.video });
+    }
 
     if (toSubmit.length === 0) {
-      setError('No uploaded images found for this junction. Upload images first.');
+      setError('No uploaded media found for this junction. Upload at least one image/audio/video.');
       return;
     }
 
     setBusy(true);
     try {
-      const responses: Array<{ direction: Direction; success: boolean; payload?: any; error?: string }> = [];
+      const responses: Array<{ direction: Direction; mediaType: string; success: boolean; payload?: any; error?: string }> = [];
 
       for (const item of toSubmit) {
         try {
-          const file = await dataUrlToFile(item.dataUrl!, `${item.dir}.jpg`);
+          const file = await dataUrlToFile(item.dataUrl, `${item.direction}-${item.mediaType}`);
           const fd = new FormData();
           fd.append('file', file);
 
-          const res = await fetch('http://localhost:8000/infer', {
-            method: 'POST',
-            body: fd
-          });
+          let url = 'http://localhost:8000/infer';
+          if (item.mediaType === 'audio') url = 'http://localhost:8000/infer-audio';
+          if (item.mediaType === 'video') url = 'http://localhost:8000/infer-video';
+
+          const res = await fetch(url, { method: 'POST', body: fd });
 
           if (!res.ok) {
             const txt = await res.text();
-            responses.push({ direction: item.dir, success: false, error: `HTTP ${res.status}: ${txt}` });
+            responses.push({ direction: item.direction, mediaType: item.mediaType, success: false, error: `HTTP ${res.status}: ${txt}` });
             continue;
           }
 
           const json = await res.json();
-          responses.push({ direction: item.dir, success: true, payload: json });
+          responses.push({ direction: item.direction, mediaType: item.mediaType, success: true, payload: json });
         } catch (err: any) {
-          responses.push({ direction: item.dir, success: false, error: String(err?.message || err) });
+          responses.push({ direction: item.direction, mediaType: item.mediaType, success: false, error: String(err?.message || err) });
         }
       }
 
-      const evals = responses.map((r) => {
-        if (!r.success) {
-          return { signal_num: DIR_TO_NUM[r.direction], green_time: 0, label: GREEN_TO_LABEL[0], score: 0, raw: { error: r.error } };
+      // Combine responses per direction: prefer image response if present, otherwise video, otherwise audio
+      const byDir: Record<Direction, Array<any>> = { north: [], east: [], south: [], west: [] };
+      for (const r of responses) {
+        byDir[r.direction].push(r);
+      }
+
+      const evals = (Object.keys(byDir) as Direction[]).map((direction) => {
+        const arr = byDir[direction] || [];
+        // prefer by mediaType priority image > video > audio (you can change)
+        const preferredOrder = ['image', 'video', 'audio'];
+        let chosen: any = arr.find(a => a.success && a.mediaType === 'image') ?? arr.find(a => a.success && a.mediaType === 'video') ?? arr.find(a => a.success && a.mediaType === 'audio') ?? arr[0];
+
+        if (!chosen || !chosen.success) {
+          return { signal_num: DIR_TO_NUM[direction], green_time: 0, label: GREEN_TO_LABEL[0], score: 0, raw: { error: chosen?.error } };
         }
-        const payload = r.payload ?? {};
+
+        const payload = chosen.payload ?? {};
         let gt = 0;
         if (payload.green_time != null) gt = Number(payload.green_time);
         else if (payload.traffic_label != null) {
@@ -144,7 +169,7 @@ export function AIControlTab({ junction, uploadedImages, onImageUpload, onApplyA
         }
         const label = GREEN_TO_LABEL[gt] ?? 'no-traffic';
         const score = extractScoreFromPayload(payload);
-        return { signal_num: DIR_TO_NUM[r.direction], green_time: gt, label, score, raw: payload };
+        return { signal_num: DIR_TO_NUM[direction], green_time: gt, label, score, raw: payload };
       });
 
       evals.sort((a, b) => {
@@ -190,8 +215,8 @@ export function AIControlTab({ junction, uploadedImages, onImageUpload, onApplyA
           <div className="relative bg-slate-50 dark:bg-slate-900 rounded-lg p-4 border-2 border-slate-200 dark:border-slate-700">
             <IntersectionVisualization
               junction={junction}
-              uploadedImages={uploadedImages}
-              onImageUpload={onImageUpload}
+              uploadedMedia={uploadedMedia}
+              onMediaUpload={onMediaUpload}
               showUploadControls={true}
             />
           </div>
@@ -203,10 +228,8 @@ export function AIControlTab({ junction, uploadedImages, onImageUpload, onApplyA
           <CardTitle className="text-xl">AI Suggestions</CardTitle>
         </CardHeader>
         <CardContent className="p-6 space-y-4">
-          {/* Show actual current green signal computed from junction.signals (keeps UI intact) */}
 {junction && (
   (() => {
-    // compute which direction currently has green (if any)
     const dirOrder: Array<{ dir: Direction; num: number }> = [
       { dir: 'north', num: 1 },
       { dir: 'east',  num: 2 },
@@ -222,7 +245,6 @@ export function AIControlTab({ junction, uploadedImages, onImageUpload, onApplyA
     }
 
     if (currentSignalNum == null) {
-      // if none green, optionally show lastApplied value from aiQueues if available
       return (
         <div className="flex items-center gap-3 p-3 bg-yellow-50 dark:bg-yellow-950 rounded-lg">
           <Clock className="h-5 w-5 text-yellow-600" />
@@ -246,13 +268,12 @@ export function AIControlTab({ junction, uploadedImages, onImageUpload, onApplyA
   })()
 )}
 
-
           <div>
             <h3 className="font-semibold mb-3">AI Suggested Queue</h3>
 
             <div className="space-y-2">
               {orderedQueue.length === 0 ? (
-                <div className="text-sm text-muted-foreground">No AI result yet. Upload images and click Submit.</div>
+                <div className="text-sm text-muted-foreground">No AI result yet. Upload media and click Submit.</div>
               ) : (
                 orderedQueue.map((item, idx) => (
                   <div
@@ -281,7 +302,7 @@ export function AIControlTab({ junction, uploadedImages, onImageUpload, onApplyA
 
             <div className="mt-4">
               <Button onClick={handleSubmitToAI} disabled={busy} className="bg-indigo-600 hover:bg-indigo-700">
-                {busy ? 'Submitting...' : 'Submit Uploaded Images to AI (decide order)'}
+                {busy ? 'Submitting...' : 'Submit Uploaded Media to AI (decide order)'}
               </Button>
             </div>
 

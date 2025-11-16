@@ -5,7 +5,7 @@ export const MOCK_JUNCTIONS: Junction[] = [
     id: 'J001',
     name: 'Junction-01: City Center',
     location: 'Main St & 1st Ave',
-    imageUrl: '/assets/images/default.svg',
+    imageUrl: 'https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRdxCbQyBgYWcPB5kmnqMUdx3Z1CINYBq6g1w&s',
     signals: {
       north: { color: 'green', timer: 45 },
       south: { color: 'red', timer: 0 },
@@ -13,14 +13,14 @@ export const MOCK_JUNCTIONS: Junction[] = [
       west: { color: 'red', timer: 0 }
     },
     lastUpdated: new Date(),
-    responsibleOfficer: 'Chief Traffic Officer',
+    responsibleOfficer: 'Traffic Police',
     controlMode: 'ai'
   },
   {
     id: 'J002',
     name: 'Junction-02: Market Square',
     location: 'Market Rd & Commerce St',
-    imageUrl: '/assets/images/default.svg',
+    imageUrl: 'https://tse4.mm.bing.net/th/id/OIP.--6KE9JdEiVKem0Vi1FZBQHaEh?pid=Api&P=0&h=180',
     signals: {
       north: { color: 'red', timer: 0 },
       south: { color: 'red', timer: 0 },
@@ -35,7 +35,7 @@ export const MOCK_JUNCTIONS: Junction[] = [
     id: 'J003',
     name: 'Junction-03: Airport Road',
     location: 'Airport Rd & Terminal Way',
-    imageUrl: '/assets/images/default.svg',
+    imageUrl: 'https://www.shutterstock.com/image-illustration/3d-illustration-4-way-junction-260nw-2350135343.jpg',
     signals: {
       north: { color: 'yellow', timer: 3 },
       south: { color: 'red', timer: 0 },
@@ -50,7 +50,7 @@ export const MOCK_JUNCTIONS: Junction[] = [
     id: 'J004',
     name: 'Junction-04: Hospital Junction',
     location: 'Hospital Rd & Medical Center Dr',
-    imageUrl: '/assets/images/default.svg',
+    imageUrl: 'https://c8.alamy.com/comp/AC4ABH/aerial-view-above-four-way-urban-intersection-san-francisco-california-AC4ABH.jpg',
     signals: {
       north: { color: 'red', timer: 0 },
       south: { color: 'green', timer: 28 },
