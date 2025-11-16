@@ -35,7 +35,7 @@ export const MOCK_JUNCTIONS: Junction[] = [
     id: 'J003',
     name: 'Junction-03: Airport Road',
     location: 'Airport Rd & Terminal Way',
-    imageUrl: 'https://www.shutterstock.com/image-illustration/3d-illustration-4-way-junction-260nw-2350135343.jpg',
+    imageUrl: 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Hyderabad_Outer_Ring_Road.jpg/330px-Hyderabad_Outer_Ring_Road.jpg',
     signals: {
       north: { color: 'yellow', timer: 3 },
       south: { color: 'red', timer: 0 },
