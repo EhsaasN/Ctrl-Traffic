@@ -1,0 +1,16 @@
+# Basic dependencies for Ctrl-Traffic (emergency vehicle/audio/traffic detection)
+tensorflow
+torch
+transformers
+fastapi
+uvicorn
+pillow
+numpy
+librosa
+soundfile
+python-multipart
+httpx
+opencv-python
+pydantic
+# Optional: If using .h5 models with tensorflow-hub
+# tensorflow-hub
